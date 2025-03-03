@@ -1,0 +1,11 @@
+websocket_url = "ws://localhost:3000/wss/monitor"
+auth_secret = "your-secret-key"
+
+[interval]
+system = 10
+network = 1
+
+[connection]
+base_delay = 1
+max_delay = 60
+max_retries = -1

@@ -4,9 +4,9 @@ mod monitor;
 
 use futures_util::{SinkExt, StreamExt};
 use std::env;
-use sysinfo::{Networks, System};
+use sysinfo::{Disks, Networks, System};
 use tokio::signal;
-use tokio::time::{interval, Duration};
+use tokio::time::{interval, sleep, Duration};
 use tokio_tungstenite::tungstenite::Message;
 use tracing::{error, info, warn};
 
@@ -37,97 +37,101 @@ async fn main() {
         info!("Received shutdown signal");
     };
 
-    info!("Connecting to WebSocket...");
-    let socket = match api::connect_websocket(
-        &config.websocket_url,
-        &config.auth_secret,
-        &api::ConnectionConfig {
-            base_delay: config.connection.base_delay,
-            max_delay: config.connection.max_delay,
-            max_retries: config.connection.max_retries,
-        },
-    )
-    .await
-    {
-        Some(socket) => socket,
-        None => {
-            error!("Failed to connect to WebSocket");
-            return;
-        }
-    };
-    info!("WebSocket connection established");
+    // Maintain WebSocket connection
+    let maintain_connection = async {
+        let mut system = System::new();
+        let mut networks = Networks::new();
+        let mut disks = Disks::new();
 
-    let (mut write, mut read) = socket.split();
-
-    let mut system = System::new();
-    let mut networks = Networks::new();
-
-    let mut system_interval = interval(Duration::from_secs(config.interval.system));
-    let mut network_interval = interval(Duration::from_secs(config.interval.network));
-
-    let collect_task = async {
+        let mut retry_count = 0;
         loop {
-            tokio::select! {
-                _ = system_interval.tick() => {
-                    // Collect system information
-                    let system_data = monitor::collect_system_info(&mut system);
-                    info!(data = ?system_data, "Collected system information");
-
-                    let msg = api::ReportMessage {
-                        r#type: "system".to_string(),
-                        data: serde_json::to_string(&system_data).unwrap(),
-                    };
-
-                    if let Err(e) = write.send(Message::Text(serde_json::to_string(&msg).unwrap().into())).await {
-                        warn!(error = %e, "Failed to report system data");
-                    }
+            info!("Connecting to WebSocket...");
+            let socket = match api::connect_websocket(
+                &config.websocket_url,
+                &config.auth_secret,
+                &api::ConnectionConfig {
+                    base_delay: config.connection.base_delay,
+                    max_delay: config.connection.max_delay,
+                    max_retries: config.connection.max_retries,
+                },
+            )
+            .await
+            {
+                Some(socket) => socket,
+                None => {
+                    error!("Failed to connect to WebSocket, retrying...");
+                    retry_count += 1;
+                    let delay =
+                        config.connection.base_delay * 2u64.pow(retry_count.min(16) as u32 - 1);
+                    let delay = delay.min(config.connection.max_delay);
+                    sleep(Duration::from_secs(delay)).await;
+                    continue;
                 }
-                _ = network_interval.tick() => {
-                    // Collect network information
-                    let network_data = monitor::collect_network_info(&mut networks);
-                    info!(data = ?network_data, "Collected network information");
+            };
 
-                    let msg = api::ReportMessage {
-                        r#type: "network".to_string(),
-                        data: serde_json::to_string(&network_data).unwrap(),
-                    };
+            info!("WebSocket connection established");
 
-                    if let Err(e) = write.send(Message::Text(serde_json::to_string(&msg).unwrap().into())).await {
-                        warn!(error = %e, "Failed to report network data");
+            let (mut write, mut read) = socket.split();
+            let mut interval = interval(Duration::from_secs(config.interval));
+
+            loop {
+                tokio::select! {
+                    _ = interval.tick() => {
+                        // Collect system information
+                        let system_data = monitor::collect_system_info(&mut system);
+                        let network_data = monitor::collect_network_info(&mut networks);
+                        let disk_data = monitor::collect_disk_info(&mut disks);
+                        let data = monitor::ReportData {
+                            uptime: System::uptime(),
+                            system: system_data,
+                            network: network_data,
+                            disk: disk_data,
+                        };
+                        let msg = api::Message {
+                            r#type: "report".to_string(),
+                            data: data
+                        };
+
+                        // Send system information to WebSocket
+                        if let Err(e) = write.send(Message::Text(serde_json::to_string(&msg).unwrap().into())).await {
+                            warn!(error = %e, "Failed to report system data, attempting reconnect");
+                            break; // Exit the current loop and reconnect.
+                        }
                     }
-                }
-                Some(msg) = read.next() => {
-                    match msg {
-                        Ok(msg) => {
-                            if let Message::Text(text) = msg {
+                    Some(msg) = read.next() => {
+                        match msg {
+                            Ok(Message::Text(text)) => {
                                 info!(message = %text, "Received WebSocket message");
                                 match serde_json::from_str::<serde_json::Value>(&text) {
-                                    Ok(json) => {
-                                        info!(json = ?json, "Parsed WebSocket message");
-                                    }
-                                    Err(e) => {
-                                        warn!(error = %e, "Failed to parse WebSocket message as JSON");
-                                    }
+                                    Ok(json) => info!(json = ?json, "Parsed WebSocket message"),
+                                    Err(e) => warn!(error = %e, "Failed to parse WebSocket message as JSON"),
                                 }
                             }
-                        }
-                        Err(e) => {
-                            error!(error = %e, "WebSocket read error");
-                            break; // Exit the loop when a connection error occurs.
+                            Err(e) => {
+                                error!(error = %e, "WebSocket read error, attempting reconnect");
+                                break; // Exit the current loop and reconnect.
+                            }
+                            _ => {}
                         }
                     }
                 }
             }
+
+            warn!("WebSocket connection lost, reconnecting...");
+            retry_count += 1;
+            let delay = config.connection.base_delay * 2u64.pow(retry_count.min(16) as u32 - 1);
+            let delay = delay.min(config.connection.max_delay);
+            sleep(Duration::from_secs(delay)).await;
         }
     };
 
-    // Run data collection and exit monitoring in parallel.
+    // Run WebSocket maintenance tasks and exit listening simultaneously
     tokio::select! {
         _ = shutdown_signal => {
             info!("Shutting down...");
         }
-        _ = collect_task => {
-            warn!("Collect task exited unexpectedly");
+        _ = maintain_connection => {
+            warn!("WebSocket maintenance task exited unexpectedly");
         }
     }
 }

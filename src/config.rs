@@ -4,14 +4,8 @@ use serde::{Deserialize, Serialize};
 pub struct AppConfig {
     pub websocket_url: String,
     pub auth_secret: String,
-    pub interval: IntervalConfig,
+    pub interval: u64,
     pub connection: ConnectionConfig,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct IntervalConfig {
-    pub system: u64,
-    pub network: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

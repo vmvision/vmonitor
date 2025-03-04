@@ -89,7 +89,7 @@ async fn main() {
                         };
                         let msg = api::Message {
                             r#type: "report".to_string(),
-                            data: data
+                            data
                         };
 
                         // Send system information to WebSocket

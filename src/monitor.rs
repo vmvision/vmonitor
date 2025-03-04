@@ -59,10 +59,10 @@ pub fn collect_vm_info(system: &mut System, disks: &mut Disks) -> VMInfo {
         arch: std::env::consts::ARCH.to_string(),
         kernel: System::kernel_version().unwrap_or_else(|| "Unknown".to_string()),
         hostname: System::host_name().unwrap_or_else(|| "Unknown".to_string()),
-        cpu: cpu,
+        cpu,
         memory: system.total_memory(),
         uptime: System::uptime(),
-        disk: disks.list().into_iter().map(|d| d.total_space()).sum(),
+        disk: disks.list().iter().map(|d| d.total_space()).sum(),
     }
 }
 

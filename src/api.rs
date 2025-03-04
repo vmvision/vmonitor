@@ -4,15 +4,16 @@ use serde::{Deserialize, Serialize};
 use tokio::net::TcpStream;
 use tokio::time::Duration;
 use tokio_tungstenite::{
-    connect_async, tungstenite::http::Request, tungstenite::http::Uri, MaybeTlsStream,
-    WebSocketStream,
+    connect_async,
+    tungstenite::http::{uri, Uri},
+    MaybeTlsStream, WebSocketStream,
 };
 use tracing::{error, info, warn};
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct ReportMessage {
+pub struct Message<T> {
     pub r#type: String,
-    pub data: String,
+    pub data: T,
 }
 
 pub struct ConnectionConfig {
@@ -28,24 +29,21 @@ pub async fn connect_websocket(
 ) -> Option<WebSocketStream<MaybeTlsStream<TcpStream>>> {
     let mut retry_count = 0;
     loop {
-        let request = Request::builder()
-            .uri(ws_url)
-            .header("sec-websocket-key", auth_secret)
-            .header(
-                "host",
-                Uri::from_str(ws_url)
-                    .expect("Invalid URL")
-                    .host()
-                    .unwrap_or("localhost"),
-            )
-            .header("upgrade", "websocket")
-            .header("connection", "upgrade")
-            .header("sec-websocket-version", 13)
-            .body(())
-            .expect("Failed to build request");
-        match connect_async(request).await {
-            Ok(_) => {
+        let mut uri_parts = Uri::from_str(ws_url).expect("Invalid URL").into_parts();
+        uri_parts.path_and_query = Some(
+            uri::PathAndQuery::from_str(&format!(
+                "{}?auth_secret={}",
+                uri_parts.path_and_query.unwrap(),
+                auth_secret
+            ))
+            .unwrap(),
+        );
+        let uri = Uri::from_parts(uri_parts).expect("Invalid URL");
+
+        match connect_async(uri).await {
+            Ok((socket, _)) => {
                 info!("WebSocket connection established");
+                return Some(socket);
             }
             Err(e) => {
                 error!(error = %e, url = %ws_url, "WebSocket connection failed");

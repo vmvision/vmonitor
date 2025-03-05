@@ -1,6 +1,17 @@
+use crate::api;
+
+use futures_util::stream::SplitSink;
+use futures_util::SinkExt;
 use netstat2::{get_sockets_info, AddressFamilyFlags, ProtocolFlags, ProtocolSocketInfo};
+use rmp_serde::{to_vec, to_vec_named};
 use serde::{Deserialize, Serialize};
 use sysinfo::{Disks, Networks, RefreshKind, System};
+use tokio::net::TcpStream;
+use tokio_tungstenite::{
+    tungstenite::{Bytes, Message},
+    MaybeTlsStream, WebSocketStream,
+};
+use tracing::warn;
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct VMInfo {
@@ -15,6 +26,7 @@ pub struct VMInfo {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct ReportData {
     pub uptime: u64,
     pub system: SystemInfo,
@@ -23,6 +35,7 @@ pub struct ReportData {
 }
 
 #[derive(Deserialize, Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct SystemInfo {
     cpu_usage: f32,
     memory_used: u64,
@@ -31,6 +44,7 @@ pub struct SystemInfo {
 }
 
 #[derive(Deserialize, Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct NetworkInfo {
     download_traffic: u64,
     upload_traffic: u64,
@@ -39,6 +53,7 @@ pub struct NetworkInfo {
 }
 
 #[derive(Deserialize, Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct DiskInfo {
     space_used: u64,
     space_total: u64,
@@ -141,5 +156,39 @@ pub fn collect_disk_info(disks: &mut Disks) -> DiskInfo {
     DiskInfo {
         space_used,
         space_total,
+    }
+}
+
+pub async fn send_metrics(
+    write: &mut SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>,
+    system: &mut System,
+    networks: &mut sysinfo::Networks,
+    disks: &mut sysinfo::Disks,
+) {
+    let system_data = collect_system_info(system);
+    let network_data = collect_network_info(networks);
+    let disk_data = collect_disk_info(disks);
+
+    let data = ReportData {
+        uptime: System::uptime(),
+        system: system_data,
+        network: network_data,
+        disk: disk_data,
+    };
+
+    let msg = api::Message {
+        r#type: "report".to_string(),
+        data,
+    };
+
+    match to_vec_named(&msg) {
+        Ok(binary_data) => {
+            if let Err(e) = write.send(Message::Binary(Bytes::from(binary_data))).await {
+                warn!(error = %e, "Failed to report system data, attempting reconnect");
+            }
+        }
+        Err(e) => {
+            warn!(error = %e, "Failed to serialize system data to MessagePack");
+        }
     }
 }

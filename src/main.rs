@@ -77,26 +77,7 @@ async fn main() {
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
-                        // Collect system information
-                        let system_data = monitor::collect_system_info(&mut system);
-                        let network_data = monitor::collect_network_info(&mut networks);
-                        let disk_data = monitor::collect_disk_info(&mut disks);
-                        let data = monitor::ReportData {
-                            uptime: System::uptime(),
-                            system: system_data,
-                            network: network_data,
-                            disk: disk_data,
-                        };
-                        let msg = api::Message {
-                            r#type: "report".to_string(),
-                            data
-                        };
-
-                        // Send system information to WebSocket
-                        if let Err(e) = write.send(Message::Text(serde_json::to_string(&msg).unwrap().into())).await {
-                            warn!(error = %e, "Failed to report system data, attempting reconnect");
-                            break; // Exit the current loop and reconnect.
-                        }
+                        monitor::send_metrics(&mut write, &mut system, &mut networks, &mut disks).await;
                     }
                     Some(msg) = read.next() => {
                         match msg {
@@ -105,6 +86,11 @@ async fn main() {
                                 match serde_json::from_str::<serde_json::Value>(&text) {
                                     Ok(json) => info!(json = ?json, "Parsed WebSocket message"),
                                     Err(e) => warn!(error = %e, "Failed to parse WebSocket message as JSON"),
+                                }
+                            }
+                            Ok(Message::Ping(ping)) => {
+                                if let Err(e) = write.send(Message::Pong(ping)).await {
+                                    error!(error = %e, "Failed to send pong response");
                                 }
                             }
                             Err(e) => {

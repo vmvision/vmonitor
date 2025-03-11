@@ -7,7 +7,7 @@ use std::env;
 use sysinfo::{Disks, Networks, System};
 use tokio::signal;
 use tokio::time::{interval, sleep, Duration};
-use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::{Bytes, Message};
 use tracing::{error, info, warn};
 
 #[tokio::main]
@@ -86,6 +86,27 @@ async fn main() {
                                 match serde_json::from_str::<serde_json::Value>(&text) {
                                     Ok(json) => info!(json = ?json, "Parsed WebSocket message"),
                                     Err(e) => warn!(error = %e, "Failed to parse WebSocket message as JSON"),
+                                }
+                            }
+                            Ok(Message::Binary(binary)) => {
+                                info!(binary = ?binary, "Received binary message");
+                                match rmp_serde::from_slice::<api::Message<serde_json::Value>>(&binary) {
+                                    Ok(api_msg) => {
+                                        if api_msg.r#type == "getInfo" {
+                                            let vm_info = monitor::collect_vm_info(&mut system, &mut disks);
+                                            let response = api::Message {
+                                                r#type: "info".to_string(),
+                                                data: vm_info,
+                                            };
+                                            if let Ok(msgpack) = rmp_serde::to_vec_named(&response) {
+                                                if let Err(e) = write.send(Message::Binary(Bytes::from(msgpack))).await {
+                                                    warn!(error = %e, "Failed to send VM info response");
+                                                }
+                                            }
+                                        }
+                                        info!(message = ?api_msg, "Parsed MessagePack message");
+                                    }
+                                    Err(e) => warn!(error = %e, "Failed to parse as api::Message"),
                                 }
                             }
                             Ok(Message::Ping(ping)) => {

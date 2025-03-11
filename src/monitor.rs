@@ -3,7 +3,8 @@ use crate::api;
 use futures_util::stream::SplitSink;
 use futures_util::SinkExt;
 use netstat2::{get_sockets_info, AddressFamilyFlags, ProtocolFlags, ProtocolSocketInfo};
-use rmp_serde::{to_vec, to_vec_named};
+use os_info;
+use rmp_serde::to_vec_named;
 use serde::{Deserialize, Serialize};
 use sysinfo::{Disks, Networks, RefreshKind, System};
 use tokio::net::TcpStream;
@@ -14,15 +15,20 @@ use tokio_tungstenite::{
 use tracing::warn;
 
 #[derive(Deserialize, Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct VMInfo {
     os: String,
+    os_version: String,
     arch: String,
+    platform: String,
+    platform_version: String,
     kernel: String,
     hostname: String,
-    cpu: String,
+    cpu: Vec<String>,
     memory: u64,
     uptime: u64,
     disk: u64,
+    version: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -36,11 +42,20 @@ pub struct ReportData {
 
 #[derive(Deserialize, Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
+pub struct SystemLoadAvg {
+    one: f64,
+    five: f64,
+    fifteen: f64,
+}
+
+#[derive(Deserialize, Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct SystemInfo {
     cpu_usage: f32,
     memory_used: u64,
     memory_total: u64,
     process_count: u32,
+    load_avg: SystemLoadAvg,
 }
 
 #[derive(Deserialize, Serialize, Debug)]
@@ -60,35 +75,58 @@ pub struct DiskInfo {
 }
 
 pub fn collect_vm_info(system: &mut System, disks: &mut Disks) -> VMInfo {
-    let cpu = if let Some(cpu) = system.cpus().first() {
-        format!(
-            "{} ({:.2} GHz)",
-            cpu.brand(),
-            cpu.frequency() as f64 / 1000.0
-        )
-    } else {
-        "Unknown".to_string()
-    };
+    let cpus: Vec<String> = system
+        .cpus()
+        .iter()
+        .map(|cpu| {
+            format!(
+                "{} ({:.2} GHz)",
+                cpu.brand(),
+                cpu.frequency() as f64 / 1000.0
+            )
+        })
+        .collect();
+
+    let os_info = os_info::get();
+
     VMInfo {
-        os: System::name().unwrap_or_else(|| "Unknown".to_string()),
+        os: os_info.os_type().to_string(),
+        os_version: os_info.version().to_string(),
         arch: std::env::consts::ARCH.to_string(),
+        platform: std::env::consts::OS.to_string(),
+        platform_version: os_info
+            .edition()
+            .map(|e| e.to_string())
+            .unwrap_or_else(|| "Unknown".to_string()),
         kernel: System::kernel_version().unwrap_or_else(|| "Unknown".to_string()),
         hostname: System::host_name().unwrap_or_else(|| "Unknown".to_string()),
-        cpu,
+        cpu: if cpus.is_empty() {
+            vec!["Unknown".to_string()]
+        } else {
+            cpus
+        },
         memory: system.total_memory(),
         uptime: System::uptime(),
         disk: disks.list().iter().map(|d| d.total_space()).sum(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
     }
 }
 
 pub fn collect_system_info(system: &mut System) -> SystemInfo {
     system.refresh_specifics(RefreshKind::everything());
 
+    let load_avg = System::load_average();
+
     SystemInfo {
         cpu_usage: system.global_cpu_usage(),
         memory_used: system.used_memory(),
         memory_total: system.total_memory(),
         process_count: system.processes().len() as u32,
+        load_avg: SystemLoadAvg {
+            one: load_avg.one,
+            five: load_avg.five,
+            fifteen: load_avg.fifteen,
+        },
     }
 }
 

@@ -3,7 +3,6 @@ use crate::api;
 use futures_util::stream::SplitSink;
 use futures_util::SinkExt;
 use netstat2::{get_sockets_info, AddressFamilyFlags, ProtocolFlags, ProtocolSocketInfo};
-use os_info;
 use rmp_serde::to_vec_named;
 use serde::{Deserialize, Serialize};
 use sysinfo::{Disks, Networks, RefreshKind, System};
@@ -54,6 +53,8 @@ pub struct SystemInfo {
     cpu_usage: f32,
     memory_used: u64,
     memory_total: u64,
+    swap_used: u64,
+    swap_total: u64,
     process_count: u32,
     load_avg: SystemLoadAvg,
 }
@@ -72,6 +73,8 @@ pub struct NetworkInfo {
 pub struct DiskInfo {
     space_used: u64,
     space_total: u64,
+    read: u64,
+    write: u64,
 }
 
 pub fn collect_vm_info(system: &mut System, disks: &mut Disks) -> VMInfo {
@@ -106,8 +109,8 @@ pub fn collect_vm_info(system: &mut System, disks: &mut Disks) -> VMInfo {
             cpus
         },
         memory: system.total_memory(),
-        uptime: System::uptime(),
         disk: disks.list().iter().map(|d| d.total_space()).sum(),
+        uptime: System::uptime(),
         version: env!("CARGO_PKG_VERSION").to_string(),
     }
 }
@@ -121,6 +124,8 @@ pub fn collect_system_info(system: &mut System) -> SystemInfo {
         cpu_usage: system.global_cpu_usage(),
         memory_used: system.used_memory(),
         memory_total: system.total_memory(),
+        swap_used: system.used_swap(),
+        swap_total: system.total_swap(),
         process_count: system.processes().len() as u32,
         load_avg: SystemLoadAvg {
             one: load_avg.one,
@@ -185,15 +190,21 @@ pub fn collect_disk_info(disks: &mut Disks) -> DiskInfo {
 
     let mut space_used = 0;
     let mut space_total = 0;
+    let mut read = 0;
+    let mut write = 0;
 
     for disk in disks.list() {
         space_total += disk.total_space();
         space_used += disk.total_space() - disk.available_space();
+        read += disk.usage().total_read_bytes;
+        write += disk.usage().total_written_bytes;
     }
 
     DiskInfo {
         space_used,
         space_total,
+        read,
+        write,
     }
 }
 

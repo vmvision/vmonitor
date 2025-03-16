@@ -92,16 +92,18 @@ async fn main() {
                                 info!(binary = ?binary, "Received binary message");
                                 match rmp_serde::from_slice::<api::Message<serde_json::Value>>(&binary) {
                                     Ok(api_msg) => {
-                                        if api_msg.r#type == "getInfo" {
+                                        if api_msg.r#type == "get_info" {
                                             let vm_info = monitor::collect_vm_info(&mut system, &mut disks);
+                                            info!(vm_info = ?vm_info, "Sending VM info response");
                                             let response = api::Message {
-                                                r#type: "info".to_string(),
+                                                r#type: "vm_info".to_string(),
                                                 data: vm_info,
                                             };
                                             if let Ok(msgpack) = rmp_serde::to_vec_named(&response) {
                                                 if let Err(e) = write.send(Message::Binary(Bytes::from(msgpack))).await {
                                                     warn!(error = %e, "Failed to send VM info response");
                                                 }
+                                                info!("Sent VM info response");
                                             }
                                         }
                                         info!(message = ?api_msg, "Parsed MessagePack message");

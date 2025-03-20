@@ -107,8 +107,9 @@ get_latest_version() {
 download_and_install() {
     log_info "Downloading VMonitor ${version}..."
 
-    local download_url="${GITHUB_DOWNLOAD_URL}/${version}/vmonitor-${arch}"
-    wget -q -N --no-check-certificate -O "${INSTALL_DIR}/vmonitor" "$download_url"
+    local download_url="${GITHUB_DOWNLOAD_URL}/${version}/vmonitor_${arch}.tar.gz"
+    wget -q -N --no-check-certificate -O "${INSTALL_DIR}/vmonitor.tar.gz" "$download_url"
+    tar -xzf "${INSTALL_DIR}/vmonitor.tar.gz" -C "${INSTALL_DIR}"
     if [[ $? -ne 0 ]]; then
         log_error "Download failed, please check the network connection and version number!"
         exit 1
@@ -120,9 +121,11 @@ download_and_install() {
 }
 setup_config() {
     log_info "Setting up configuration..."
-    if [[ -z "$url" ]] || [[ -z "$token" ]]; then
-        log_error "Server address and secret are required!"
-        exit 1
+    if [[ -z "$url" ]]; then
+        read -p "Please enter server address: " url
+    fi
+    if [[ -z "$token" ]]; then
+        read -p "Please enter secret token: " token
     fi
     cat > /etc/vmonitor/config.yaml << EOF
 websocket_url = "${url}"

@@ -1,0 +1,526 @@
+# Builds the following releases:
+# - Binaries
+# - Binaries via VMs
+# - Cirrus binaries (currently just Linux 2.17)
+# - MSI installer for Windows (.msi)
+# - .deb releases
+# - .rpm releases
+
+name: "build releases"
+
+on:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      caller:
+        description: "The calling workflow."
+        default: ""
+        required: false
+        type: string
+
+env:
+  RUST_BACKTRACE: 1
+  CARGO_INCREMENTAL: 0
+  CARGO_TERM_COLOR: always
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_HUSKY_DONT_INSTALL_HOOKS: true
+
+permissions:
+  id-token: write
+  contents: read
+  attestations: write
+
+jobs:
+  # Build binary files for different platforms.
+  build-binaries:
+    name: "Build binaries"
+    runs-on: ${{ matrix.info.os }}
+    container: ${{ matrix.info.container }}
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        info:
+          # ======= Supported targets =======
+          # Linux (x86-64, x86, aarch64)
+          #
+          # TODO: In the future, when ARM runners are available on github, switch ARM targets off of cross.
+          - {
+              os: "ubuntu-20.04",
+              target: "x86_64-unknown-linux-gnu",
+              cross: false,
+              generate-other-artifacts: true,
+            }
+          - {
+              os: "ubuntu-20.04",
+              target: "i686-unknown-linux-gnu",
+              cross: true,
+            }
+          - {
+              os: "ubuntu-20.04",
+              target: "x86_64-unknown-linux-musl",
+              cross: true,
+            }
+          - {
+              os: "ubuntu-20.04",
+              target: "i686-unknown-linux-musl",
+              cross: true,
+            }
+          - {
+              os: "ubuntu-20.04",
+              target: "aarch64-unknown-linux-gnu",
+              cross: true,
+            }
+          - {
+              os: "ubuntu-20.04",
+              target: "aarch64-unknown-linux-musl",
+              cross: true,
+            }
+
+          # macOS (x86-64 and aarch64)
+          - { os: "macos-13", target: "x86_64-apple-darwin", cross: false }
+          - { os: "macos-14", target: "aarch64-apple-darwin", cross: false }
+
+          # Windows (x86-64, x86)
+          - {
+              os: "windows-2019",
+              target: "x86_64-pc-windows-msvc",
+              cross: false,
+            }
+          - { os: "windows-2019", target: "i686-pc-windows-msvc", cross: false }
+          - {
+              os: "windows-2019",
+              target: "x86_64-pc-windows-gnu",
+              cross: false,
+            }
+
+          # ======= Unsupported targets =======
+          # armv7
+          - {
+              os: "ubuntu-20.04",
+              target: "armv7-unknown-linux-gnueabihf",
+              cross: true,
+            }
+          - {
+              os: "ubuntu-20.04",
+              target: "armv7-unknown-linux-musleabihf",
+              cross: true,
+            }
+
+          # PowerPC 64 LE
+          - {
+              os: "ubuntu-20.04",
+              target: "powerpc64le-unknown-linux-gnu",
+              cross: true,
+            }
+
+          # Risc-V 64gc
+          - {
+              os: "ubuntu-20.04",
+              target: "riscv64gc-unknown-linux-gnu",
+              cross: true,
+            }
+
+          # Seems like cross' FreeBSD image is a bit broken? I
+          # get build errors, may be related to this issue:
+          # https://github.com/cross-rs/cross/issues/1291
+
+    steps:
+      - name: Checkout repository
+        if: matrix.info.container == ''
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+        with:
+          fetch-depth: 1
+
+      - name: Set up Rust toolchain
+        if: matrix.info.container == ''
+        uses: dtolnay/rust-toolchain@21dc36fb71dd22e3317045c0c31a3f4249868b17
+        with:
+          toolchain: ${{ matrix.info.rust || 'stable' }}
+          target: ${{ matrix.info.target }}
+
+      - name: Set up Rust toolchain (non-GitHub container)
+        if: matrix.info.container != ''
+        shell: bash
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs --output rustup.sh
+          sh rustup.sh --default-toolchain stable -y
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+          
+      - name: Build
+        uses: ClementTsang/cargo-action@v0.0.5
+        env:
+          BTM_GENERATE: true
+          BTM_BUILD_RELEASE_CALLER: ${{ inputs.caller }}
+        with:
+          command: build
+          args: --release --verbose --locked --target=${{ matrix.info.target }}
+          use-cross: ${{ matrix.info.cross }}
+          cross-version: 0.2.5
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.event.repository.name }}-${{ matrix.target }}
+          path: target/release/${{ github.event.repository.name }}${{ matrix.suffix }}
+
+      - name: Bundle release (Windows)
+        if: matrix.info.os == 'windows-2019'
+        shell: bash
+        run: |
+          cp target/${{ matrix.info.target }}/release/vmonitor.exe vmonitor.exe
+          7z a vmonitor_${{ matrix.info.target }}.zip "vmonitor.exe"
+          echo "ASSET=vmonitor_${{ matrix.info.target }}.zip" >> $GITHUB_ENV
+
+      - name: Bundle release (Linux and macOS)
+        if: matrix.info.os != 'windows-2019'
+        shell: bash
+        run: |
+          cp target/${{ matrix.info.target }}/release/vmonitor ./vmonitor
+          tar -czvf vmonitor_${{ matrix.info.target }}.tar.gz vmonitor
+          echo "ASSET=vmonitor_${{ matrix.info.target }}.tar.gz" >> $GITHUB_ENV
+
+      - name: Generate artifact attestation for file
+        uses: actions/attest-build-provenance@6149ea5740be74af77f260b9db67e633f6b0a9a1 # v1.4.2
+        with:
+          subject-path: ${{ env.ASSET }}
+
+      - name: Create release directory for artifact, move file
+        shell: bash
+        run: |
+          mkdir release
+          mv ${{ env.ASSET }} release/
+
+      - name: Save release as artifact
+        uses: actions/upload-artifact@26f96dfa697d77e81fd5907df203aa23a56210a8 # v4.3.0
+        with:
+          retention-days: 3
+          name: "release-${{ matrix.info.target }}"
+          path: release
+
+  # build-vm:
+  #   name: "Build binaries via VMs"
+  #   runs-on: "ubuntu-latest"
+  #   timeout-minutes: 12
+  #   strategy:
+  #     fail-fast: false
+  #     matrix:
+  #       info:
+  #         # Seems like cross' FreeBSD image is a bit broken? I get build errors, may be related to this issue:
+  #         # https://github.com/cross-rs/cross/issues/1291
+  #         #
+  #         # Alas, that's why we do it with VMs.
+  #         - {
+  #             type: "freebsd",
+  #             os_release: "15.0",
+  #             target: "x86_64-unknown-freebsd",
+  #           }
+  #         - {
+  #             type: "freebsd",
+  #             os_release: "14.1",
+  #             target: "x86_64-unknown-freebsd",
+  #           }
+  #         - {
+  #             type: "freebsd",
+  #             os_release: "13.3",
+  #             target: "x86_64-unknown-freebsd",
+  #           }
+  #   steps:
+  #     - name: Checkout repository
+  #       if: matrix.info.container == ''
+  #       uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+  #       with:
+  #         fetch-depth: 1
+
+  #     - name: Build (FreeBSD)
+  #       if: ${{ matrix.info.type == 'freebsd' }}
+  #       uses: vmactions/freebsd-vm@debf37ca7b7fa40e19c542ef7ba30d6054a706a4 # v1.1.5
+  #       with:
+  #         release: "${{ matrix.info.os_release }}"
+  #         envs: "RUST_BACKTRACE CARGO_INCREMENTAL CARGO_PROFILE_DEV_DEBUG CARGO_HUSKY_DONT_INSTALL_HOOKS"
+  #         usesh: true
+  #         prepare: |
+  #           pkg install -y curl bash
+  #           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs --output rustup.sh
+  #           sh rustup.sh --default-toolchain stable -y
+  #         run: |
+  #           . "$HOME/.cargo/env"
+  #           BTM_GENERATE=true BTM_BUILD_RELEASE_CALLER=${{ inputs.caller }} cargo build --release --verbose --locked --target=${{ matrix.info.target }} 
+
+  #     - name: Bundle release
+  #       shell: bash
+  #       run: |
+  #         cp target/${{ matrix.info.target }}/release/vmonitor ./vmonitor
+  #         tar -czvf vmonitor_${{ matrix.info.target }}-${{ matrix.info.os_release }}.tar.gz vmonitor
+  #         echo "ASSET=vmonitor_${{ matrix.info.target }}-${{ matrix.info.os_release }}.tar.gz" >> $GITHUB_ENV
+
+  #     - name: Generate artifact attestation for file
+  #       uses: actions/attest-build-provenance@6149ea5740be74af77f260b9db67e633f6b0a9a1 # v1.4.2
+  #       with:
+  #         subject-path: ${{ env.ASSET }}
+
+  #     - name: Create release directory for artifact, move file
+  #       shell: bash
+  #       run: |
+  #         mkdir release
+  #         mv ${{ env.ASSET }} release/
+
+  #     - name: Save release as artifact
+  #       uses: actions/upload-artifact@26f96dfa697d77e81fd5907df203aa23a56210a8 # v4.3.0
+  #       with:
+  #         retention-days: 3
+  #         name: "release-${{ matrix.info.target }}-${{ matrix.info.os_release }}"
+  #         path: release
+
+  # build-msi:
+  #   name: "Build MSI (WiX) installer"
+  #   runs-on: "windows-2019"
+  #   timeout-minutes: 12
+  #   steps:
+  #     - name: Checkout repository
+  #       uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+  #       with:
+  #         fetch-depth: 1
+
+  #     - name: Install Net-Framework-Core
+  #       shell: powershell
+  #       run: Install-WindowsFeature Net-Framework-Core
+
+  #     - name: Install wixtoolset
+  #       uses: crazy-max/ghaction-chocolatey@0e015857dd851f84fcb7fb53380eb5c4c8202333 # v3.0.0
+  #       with:
+  #         args: install -y wixtoolset
+
+  #     - name: Set up Rust toolchain
+  #       uses: dtolnay/rust-toolchain@21dc36fb71dd22e3317045c0c31a3f4249868b17
+  #       with:
+  #         toolchain: stable
+  #         target: x86_64-pc-windows-msvc
+
+  #     - name: Install cargo-wix
+  #       shell: powershell
+  #       run: |
+  #         cargo install cargo-wix --version 0.3.8 --locked
+
+  #     - name: Build MSI file
+  #       shell: powershell
+  #       env:
+  #         BTM_GENERATE: true
+  #       run: |
+  #         cargo wix --nocapture
+
+  #     - name: Generate artifact attestation for file
+  #       uses: actions/attest-build-provenance@6149ea5740be74af77f260b9db67e633f6b0a9a1 # v1.4.2
+  #       with:
+  #         subject-path: "vmonitor_x86_64_installer.msi"
+
+  #     - name: Create release directory for artifact, move files
+  #       shell: bash
+  #       run: |
+  #         mkdir release
+  #         mv vmonitor_x86_64_installer.msi release/
+
+  #     - name: Save release as artifact
+  #       uses: actions/upload-artifact@26f96dfa697d77e81fd5907df203aa23a56210a8 # v4.3.0
+  #       with:
+  #         retention-days: 3
+  #         name: "release-build-msi"
+  #         path: release
+
+  # build-deb:
+  #   name: "Build .deb software packages"
+  #   runs-on: "ubuntu-20.04"
+  #   timeout-minutes: 12
+  #   strategy:
+  #     fail-fast: false
+  #     matrix:
+  #       # TODO: In the future, when ARM runners are available on github, switch ARM targets off of cross.
+  #       info:
+  #         - { target: "x86_64-unknown-linux-gnu", dpkg: amd64 }
+  #         - { target: "x86_64-unknown-linux-musl", cross: true, dpkg: amd64 }
+  #         - {
+  #             target: "aarch64-unknown-linux-gnu",
+  #             cross: true,
+  #             dpkg: arm64,
+  #             container: "ghcr.io/clementtsang/cargo-deb-aarch64-unknown-linux-gnu",
+  #           }
+  #         - {
+  #             target: "armv7-unknown-linux-gnueabihf",
+  #             cross: true,
+  #             dpkg: armhf,
+  #             container: "ghcr.io/clementtsang/cargo-deb-armv7-unknown-linux-gnueabihf",
+  #           }
+  #         - {
+  #             target: "aarch64-unknown-linux-musl",
+  #             cross: true,
+  #             dpkg: arm64,
+  #             container: "ghcr.io/clementtsang/cargo-deb-aarch64-unknown-linux-gnu",
+  #           }
+  #         - {
+  #             target: "armv7-unknown-linux-musleabihf",
+  #             cross: true,
+  #             dpkg: armhf,
+  #             container: "ghcr.io/clementtsang/cargo-deb-armv7-unknown-linux-gnueabihf",
+  #           }
+  #   steps:
+  #     - name: Checkout repository
+  #       uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+  #       with:
+  #         fetch-depth: 1
+
+  #     - name: Set up Rust toolchain
+  #       uses: dtolnay/rust-toolchain@21dc36fb71dd22e3317045c0c31a3f4249868b17
+  #       with:
+  #         toolchain: ${{ matrix.info.rust || 'stable' }}
+  #         target: ${{ matrix.info.target }}
+
+  #     # TODO: Could I use the previous jobs to skip this call?
+  #     - name: Build
+  #       uses: ClementTsang/cargo-action@v0.0.5
+  #       env:
+  #         BTM_GENERATE: true
+  #         BTM_BUILD_RELEASE_CALLER: ${{ inputs.caller }}
+  #       with:
+  #         command: build
+  #         args: --release --locked --verbose --target ${{ matrix.info.target }}
+  #         use-cross: ${{ matrix.info.cross || false }}
+  #         cross-version: 0.2.5
+
+  #     - name: Build Debian release (x86-64)
+  #       if: startsWith(matrix.info.target, 'x86_64')
+  #       env:
+  #         BTM_GENERATE: true
+  #       run: |
+  #         cargo install cargo-deb --version 2.5.1 --locked
+  #         cargo deb --no-build --target ${{ matrix.info.target }}
+  #         cp ./target/${{ matrix.info.target }}/debian/vmonitor_*.deb .
+
+  #     - name: Build Debian release (ARM)
+  #       if: startsWith(matrix.info.target, 'x86_64') != true
+  #       env:
+  #         BTM_GENERATE: true
+  #       run: |
+  #         docker pull ${{ matrix.info.container }}
+  #         docker run -t --rm --mount type=bind,source="$(pwd)",target=/volume ${{ matrix.info.container }} "--no-build --variant ${{ matrix.info.dpkg }} --target ${{ matrix.info.target }}" "/volume"
+  #         cp ./target/${{ matrix.info.target }}/debian/vmonitor-*.deb .
+  #         TMP_NAME=$(find vmonitor-*.deb)
+  #         VERSION=${{ matrix.info.dpkg }}
+  #         mv $TMP_NAME $(echo $TMP_NAME | sed "s/-$VERSION//")
+
+  #     - name: Rename if it is a musl target
+  #       if: contains(matrix.info.target, 'musl')
+  #       run: |
+  #         TMP_NAME=$(find vmonitor_*.deb)
+  #         mv $TMP_NAME $(echo $TMP_NAME | sed "s/vmonitor/vmonitor-musl/")
+
+  #     # TODO: Maybe rename version if nightly?
+  #     - name: Verify Debian release
+  #       id: verify
+  #       run: |
+  #         DEB_FILE=$(find vmonitor*_*.deb)
+  #         dpkg -I $DEB_FILE
+  #         dpkg -I $DEB_FILE | grep ${{ matrix.info.dpkg }} && echo "Found correct architecture"
+  #         echo "DEB_FILE=$DEB_FILE" >> $GITHUB_OUTPUT
+
+  #     - name: Delete generated Debian folder
+  #       run: |
+  #         sudo chown $USER ./target/${{ matrix.info.target }}/debian/ 2>/dev/null || true
+  #         rm -r ./target/${{ matrix.info.target }}/debian/
+
+  #     - name: Generate artifact attestation for file
+  #       uses: actions/attest-build-provenance@6149ea5740be74af77f260b9db67e633f6b0a9a1 # v1.4.2
+  #       with:
+  #         subject-path: ${{ steps.verify.outputs.DEB_FILE }}
+
+  #     - name: Create release directory for artifact, move file
+  #       shell: bash
+  #       run: |
+  #         mkdir release
+  #         mv ${{ steps.verify.outputs.DEB_FILE }} release/
+
+  #     - name: Save release as artifact
+  #       uses: actions/upload-artifact@26f96dfa697d77e81fd5907df203aa23a56210a8 # v4.3.0
+  #       with:
+  #         retention-days: 3
+  #         name: release-build-deb-${{ matrix.info.target }}
+  #         path: release
+
+  # build-rpm:
+  #   name: "Build .rpm software packages"
+  #   runs-on: ubuntu-latest
+  #   container: ghcr.io/clementtsang/almalinux-8
+  #   timeout-minutes: 12
+  #   strategy:
+  #     fail-fast: false
+  #     matrix:
+  #       info:
+  #         - { target: "x86_64-unknown-linux-gnu" }
+  #         - { target: "x86_64-unknown-linux-musl", cross: true }
+  #   steps:
+  #     - name: Checkout repository
+  #       uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+  #       with:
+  #         fetch-depth: 1
+
+  #     - name: Set up Rust toolchain
+  #       uses: dtolnay/rust-toolchain@21dc36fb71dd22e3317045c0c31a3f4249868b17
+  #       with:
+  #         toolchain: ${{ matrix.info.rust || 'stable' }}
+  #         target: ${{ matrix.info.target }}
+
+  #     # TODO: Could I use the previous jobs to skip this call?
+  #     - name: Build
+  #       uses: ClementTsang/cargo-action@v0.0.5
+  #       env:
+  #         BTM_GENERATE: true
+  #         BTM_BUILD_RELEASE_CALLER: ${{ inputs.caller }}
+  #         CROSS_CONTAINER_IN_CONTAINER: true
+  #       with:
+  #         command: build
+  #         use-cross: ${{ matrix.info.cross || false }}
+  #         args: --release --locked --verbose --target ${{ matrix.info.target }}
+  #         cross-version: 0.2.5
+
+  #     - name: Build rpm release
+  #       env:
+  #         BTM_GENERATE: true
+  #       run: |
+  #         cargo install cargo-generate-rpm --version 0.11.0 --locked
+  #         cargo generate-rpm --target ${{ matrix.info.target }}
+  #         cp ./target/${{ matrix.info.target }}/generate-rpm/vmonitor-*.rpm .
+
+  #     - name: Rename if it is a musl target
+  #       if: contains(matrix.info.target, 'musl')
+  #       run: |
+  #         TMP_NAME=$(find vmonitor-*.rpm)
+  #         mv $TMP_NAME $(echo $TMP_NAME | sed "s/vmonitor/vmonitor-musl/")
+
+  #     - name: Verify rpm release
+  #       id: verify
+  #       run: |
+  #         RPM_FILE=$(find vmonitor-*.rpm)
+  #         rpm -qip $RPM_FILE
+  #         echo "RPM_FILE=$RPM_FILE" >> $GITHUB_OUTPUT
+
+  #     - name: Delete generated rpm folder
+  #       run: |
+  #         sudo chown $USER ./target/${{ matrix.info.target }}/generate-rpm/ 2>/dev/null || true
+  #         rm -r ./target/${{ matrix.info.target }}/generate-rpm/
+
+  #     - name: Generate artifact attestation for file
+  #       uses: actions/attest-build-provenance@6149ea5740be74af77f260b9db67e633f6b0a9a1 # v1.4.2
+  #       with:
+  #         subject-path: ${{ steps.verify.outputs.RPM_FILE }}
+
+  #     - name: Create release directory for artifact, move file
+  #       shell: bash
+  #       run: |
+  #         mkdir release
+  #         mv ${{ steps.verify.outputs.RPM_FILE }} release/
+
+  #     - name: Save release as artifact
+  #       uses: actions/upload-artifact@26f96dfa697d77e81fd5907df203aa23a56210a8 # v4.3.0
+  #       with:
+  #         retention-days: 3
+  #         name: release-build-rpm-${{ matrix.info.target }}
+  #         path: release

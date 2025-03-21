@@ -188,7 +188,7 @@ jobs:
       - name: Create release directory for artifact, move file
         shell: bash
         run: |
-          mkdir release
+          mkdir -p release
           mv ${{ env.ASSET }} release/
 
       - name: Save release as artifact

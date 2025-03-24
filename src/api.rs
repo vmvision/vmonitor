@@ -23,18 +23,28 @@ pub struct ConnectionConfig {
 }
 
 pub async fn connect_websocket(
-    ws_url: &str,
-    auth_secret: &str,
+    server: &str,
+    secret: &str,
     config: &ConnectionConfig,
 ) -> Option<WebSocketStream<MaybeTlsStream<TcpStream>>> {
     let mut retry_count = 0;
     loop {
-        let mut uri_parts = Uri::from_str(ws_url).expect("Invalid URL").into_parts();
+        let mut uri_parts = Uri::from_str(server).expect("Invalid URL").into_parts();
+        let path_and_query = uri_parts.path_and_query.as_ref()
+            .map(|pq| {
+                if pq.path() == "/" {
+                    "/wss/master".to_string()
+                } else {
+                    pq.to_string()
+                }
+            })
+            .unwrap_or_else(|| "/wss/master".to_string());
+            
         uri_parts.path_and_query = Some(
             uri::PathAndQuery::from_str(&format!(
-                "{}?auth_secret={}",
-                uri_parts.path_and_query.unwrap(),
-                auth_secret
+                "{}?secret={}",
+                path_and_query,
+                secret
             ))
             .unwrap(),
         );
@@ -46,7 +56,7 @@ pub async fn connect_websocket(
                 return Some(socket);
             }
             Err(e) => {
-                error!(error = %e, url = %ws_url, "WebSocket connection failed");
+                error!(error = %e, url = %server, "WebSocket connection failed");
                 if let tokio_tungstenite::tungstenite::Error::Http(response) = &e {
                     if response.status() == 401 {
                         error!("Authentication failed - invalid or missing auth token");

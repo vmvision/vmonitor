@@ -1,22 +1,31 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct AppConfig {
-    pub endpoints: Vec<EndpointConfig>,
-    pub interval: u64,
+    // Global settings
+    pub metrics_interval: u64,
+    pub ip_report_interval: u64,
     pub connection: ConnectionConfig,
+    // Endpoints
+    pub endpoints: Vec<EndpointConfig>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct EndpointConfig {
     pub name: String,
-    pub websocket_url: String,
-    pub auth_secret: String,
+    pub server: String,
+    pub secret: String,
     #[serde(default = "default_enabled")]
     pub enabled: bool,
+    #[serde(default = "Option::default")]
+    pub metrics_interval: Option<u64>,
+    #[serde(default = "Option::default")]
+    pub ip_report_interval: Option<u64>,
+    #[serde(default = "Option::default")]
+    pub connection: Option<ConnectionConfig>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct ConnectionConfig {
     #[serde(default = "default_base_delay")]
     pub base_delay: u64,
@@ -48,5 +57,15 @@ impl AppConfig {
             .add_source(config::File::with_name(path))
             .build()?;
         cfg.try_deserialize()
+    }
+
+    pub fn save_to_file(&self, path: &str) -> Result<(), std::io::Error> {
+        let toml = toml::to_string_pretty(self).map_err(|e| {
+            std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("Failed to serialize config: {}", e),
+            )
+        })?;
+        std::fs::write(path, toml)
     }
 }

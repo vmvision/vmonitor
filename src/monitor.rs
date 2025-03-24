@@ -226,7 +226,7 @@ pub async fn send_metrics(
     };
 
     let msg = api::Message {
-        r#type: "report".to_string(),
+        r#type: "metrics".to_string(),
         data,
     };
 

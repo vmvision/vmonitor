@@ -1,9 +1,10 @@
 mod api;
 mod app;
+mod cli;
 mod config;
 mod monitor;
 
-use clap::{Parser, Subcommand};
+use clap::Parser;
 use std::env;
 use tracing::{error, info};
 
@@ -29,16 +30,7 @@ struct Args {
     log_level: String,
 
     #[command(subcommand)]
-    command: Option<Commands>,
-}
-
-#[derive(Subcommand, Debug)]
-enum Commands {
-    /// List all configured endpoints
-    List,
-
-    /// Show version information
-    Version,
+    command: Option<cli::Commands>,
 }
 
 #[tokio::main]
@@ -55,45 +47,15 @@ async fn main() {
         .with_env_filter(&args.log_level)
         .init();
 
-    // Handle subcommands first
-    if let Some(command) = args.command {
-        match command {
-            Commands::List => {
-                // Get config path from environment variable or command line argument
-                let config_path = env::var(&args.env_var).unwrap_or(args.config);
-
-                // Load configuration from config file
-                let config = match config::AppConfig::from_file(&config_path) {
-                    Ok(cfg) => cfg,
-                    Err(e) => {
-                        error!(error = %e, "Failed to load config");
-                        std::process::exit(1);
-                    }
-                };
-
-                println!("Configured endpoints:");
-                for endpoint in &config.endpoints {
-                    println!(
-                        "  - {} ({})",
-                        endpoint.name,
-                        if endpoint.enabled {
-                            "enabled"
-                        } else {
-                            "disabled"
-                        }
-                    );
-                }
-                std::process::exit(0);
-            }
-            Commands::Version => {
-                println!("vmonitor {}", env!("CARGO_PKG_VERSION"));
-                std::process::exit(0);
-            }
-        }
-    }
-
     // Get config path from environment variable or command line argument
     let config_path = env::var(&args.env_var).unwrap_or(args.config);
+
+    // Handle subcommands first
+    if let Some(command) = args.command {
+        let exit_code = cli::handle_command(command, &config_path);
+        std::process::exit(if exit_code == std::process::ExitCode::SUCCESS { 0 } else { 1 });
+    }
+
     info!(config_path = %config_path, "Starting application");
 
     // Load configuration from config file

@@ -1,8 +1,28 @@
-websocket_url = "ws://localhost:3000/wss/monitor"
-auth_secret = "your-secret-key"
-interval = 3
+# Global settings
+metrics_interval = 60
 
+# Default connection settings
 [connection]
 base_delay = 1
 max_delay = 60
 max_retries = -1
+
+# Endpoints configuration
+[[endpoints]]
+name = "default"
+websocket_url = "ws://localhost:3000/wss/monitor"
+auth_secret = "your-secret-here"
+enabled = true
+# Optional override for this endpoint
+metrics_interval = 30  # Override default interval
+[endpoints.connection]  # Override default connection settings
+base_delay = 2
+max_delay = 30
+max_retries = 3
+
+[[endpoints]]
+name = "backup"
+websocket_url = "wss://backup.example.com/ws"
+auth_secret = "your-backup-secret-here"
+enabled = true
+# This endpoint will use the default settings since no overrides are specified

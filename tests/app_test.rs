@@ -6,7 +6,8 @@ use tokio::time::Duration;
 async fn test_app_startup_shutdown() {
     // Create test config
     let config = AppConfig {
-        interval: 1,
+        metrics_interval: 1,
+        ip_report_interval: 1,
         connection: ConnectionConfig {
             base_delay: 1,
             max_delay: 5,
@@ -15,9 +16,12 @@ async fn test_app_startup_shutdown() {
         endpoints: vec![
             EndpointConfig {
                 name: "test".to_string(),
-                websocket_url: "wss://test.example.com/ws".to_string(),
-                auth_secret: "test-secret".to_string(),
+                server: "wss://test.example.com/ws".to_string(),
+                secret: "test-secret".to_string(),
                 enabled: true,
+                metrics_interval: None,
+                ip_report_interval: None,
+                connection: None,
             }
         ],
     };
@@ -45,7 +49,8 @@ async fn test_app_startup_shutdown() {
 async fn test_app_with_disabled_endpoints() {
     // Create test config with disabled endpoint
     let config = AppConfig {
-        interval: 1,
+        metrics_interval: 1,
+        ip_report_interval: 1,
         connection: ConnectionConfig {
             base_delay: 1,
             max_delay: 5,
@@ -54,9 +59,12 @@ async fn test_app_with_disabled_endpoints() {
         endpoints: vec![
             EndpointConfig {
                 name: "disabled".to_string(),
-                websocket_url: "wss://test.example.com/ws".to_string(),
-                auth_secret: "test-secret".to_string(),
+                server: "wss://test.example.com/ws".to_string(),
+                secret: "test-secret".to_string(),
                 enabled: false,
+                metrics_interval: None,
+                ip_report_interval: None,
+                connection: None,
             }
         ],
     };

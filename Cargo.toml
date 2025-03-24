@@ -6,9 +6,13 @@ license = "GPL-3.0-or-later"
 authors = ["AprilNEA <github@sku.moe>"]
 description = "A simple and lightweight system monitor"
 repository = "https://github.com/vmvision/vmonitor"
+readme = "README.md"
+keywords = ["monitor", "system", "websocket", "metrics"]
+categories = ["monitoring", "network-programming"]
 
 [dependencies]
 # Core
+os_info = "3.7.0"
 sysinfo = "0.33.1"
 netstat2 = "0.11.1"
 # Runtime
@@ -26,5 +30,11 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Utils
 config = "0.14.0"
+futures = "0.3"
 futures-util = "0.3"
-os_info = "3.7.0"
+# CLI
+clap = { version = "4.5", features = ["derive"] }
+
+[dev-dependencies]
+tempfile = "3.8"
+tokio-test = "0.4"

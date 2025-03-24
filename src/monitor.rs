@@ -42,21 +42,21 @@ pub struct ReportData {
 #[derive(Deserialize, Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct SystemLoadAvg {
-    one: f64,
-    five: f64,
-    fifteen: f64,
+    pub one: f64,
+    pub five: f64,
+    pub fifteen: f64,
 }
 
 #[derive(Deserialize, Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct SystemInfo {
-    cpu_usage: f32,
-    memory_used: u64,
-    memory_total: u64,
-    swap_used: u64,
-    swap_total: u64,
-    process_count: u32,
-    load_avg: SystemLoadAvg,
+    pub cpu_usage: f32,
+    pub memory_used: u64,
+    pub memory_total: u64,
+    pub swap_used: u64,
+    pub swap_total: u64,
+    pub process_count: u32,
+    pub load_avg: SystemLoadAvg,
 }
 
 #[derive(Deserialize, Serialize, Debug)]

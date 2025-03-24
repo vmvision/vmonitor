@@ -2,10 +2,18 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AppConfig {
-    pub websocket_url: String,
-    pub auth_secret: String,
+    pub endpoints: Vec<EndpointConfig>,
     pub interval: u64,
     pub connection: ConnectionConfig,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct EndpointConfig {
+    pub name: String,
+    pub websocket_url: String,
+    pub auth_secret: String,
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -28,6 +36,10 @@ fn default_max_delay() -> u64 {
 
 fn default_max_retries() -> i32 {
     -1
+}
+
+fn default_enabled() -> bool {
+    true
 }
 
 impl AppConfig {

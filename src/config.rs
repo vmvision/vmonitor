@@ -2,12 +2,9 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct AppConfig {
-    // Global settings
-    pub metrics_interval: u64,
-    pub ip_report_interval: u64,
-    pub connection: ConnectionConfig,
-    // Endpoints
     pub endpoints: Vec<EndpointConfig>,
+    #[serde(default = "default_connection")]
+    pub connection: ConnectionConfig,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -17,10 +14,6 @@ pub struct EndpointConfig {
     pub secret: String,
     #[serde(default = "default_enabled")]
     pub enabled: bool,
-    #[serde(default = "Option::default")]
-    pub metrics_interval: Option<u64>,
-    #[serde(default = "Option::default")]
-    pub ip_report_interval: Option<u64>,
     #[serde(default = "Option::default")]
     pub connection: Option<ConnectionConfig>,
 }
@@ -49,6 +42,14 @@ fn default_max_retries() -> i32 {
 
 fn default_enabled() -> bool {
     true
+}
+
+fn default_connection() -> ConnectionConfig {
+    ConnectionConfig {
+        base_delay: default_base_delay(),
+        max_delay: default_max_delay(),
+        max_retries: default_max_retries(),
+    }
 }
 
 impl AppConfig {

@@ -1,6 +1,6 @@
 [package]
 name = "vmonitor"
-version = "0.0.1-alpha.2"
+version = "0.0.5"
 edition = "2021"
 license = "GPL-3.0-or-later"
 authors = ["AprilNEA <github@sku.moe>"]

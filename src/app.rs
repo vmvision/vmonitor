@@ -1,11 +1,11 @@
 use futures_util::{SinkExt, StreamExt};
+use std::sync::Arc;
 use sysinfo::{Disks, Networks, System};
 use tokio::signal;
+use tokio::sync::RwLock;
 use tokio::time::{interval, sleep, Duration};
 use tokio_tungstenite::tungstenite::{Bytes, Message};
 use tracing::{error, info, warn};
-use std::sync::Arc;
-use tokio::sync::RwLock;
 
 use crate::api;
 use crate::config::AppConfig;
@@ -46,13 +46,12 @@ impl App {
             }
 
         }
-
     }
 
     async fn setup_endpoints(&self) {
         let config = self.config.read().await;
         let mut tasks = self.endpoint_tasks.write().await;
-        
+
         // Clear existing tasks
         for task in tasks.iter_mut() {
             task.abort();
@@ -64,7 +63,7 @@ impl App {
             let endpoint = endpoint.clone();
             let config = self.config.clone();
             let tasks = self.endpoint_tasks.clone();
-            
+
             let task = tokio::spawn(async move {
                 let mut system = System::new();
                 let mut networks = Networks::new();
@@ -99,7 +98,8 @@ impl App {
                     info!(endpoint = %endpoint.name, "WebSocket connection established");
 
                     let (mut write, mut read) = socket.split();
-                    let mut interval = interval(Duration::from_secs(config.read().await.metrics_interval));
+                    let mut metrics_interval = 10; // Default interval of 10 seconds
+                    let mut interval = interval(Duration::from_secs(metrics_interval));
 
                     loop {
                         tokio::select! {
@@ -119,21 +119,34 @@ impl App {
                                         info!(endpoint = %endpoint.name, binary = ?binary, "Received binary message");
                                         match rmp_serde::from_slice::<api::Message<serde_json::Value>>(&binary) {
                                             Ok(api_msg) => {
-                                                if api_msg.r#type == "get_info" {
-                                                    let vm_info = monitor::collect_vm_info(&mut system, &mut disks);
-                                                    info!(endpoint = %endpoint.name, vm_info = ?vm_info, "Sending VM info response");
-                                                    let response = api::Message {
-                                                        r#type: "vm_info".to_string(),
-                                                        data: vm_info,
-                                                    };
-                                                    if let Ok(msgpack) = rmp_serde::to_vec_named(&response) {
-                                                        if let Err(e) = write.send(Message::Binary(Bytes::from(msgpack))).await {
-                                                            warn!(endpoint = %endpoint.name, error = %e, "Failed to send VM info response");
+                                                match api_msg.r#type.as_str() {
+                                                    "get_info" => {
+                                                        let vm_info = monitor::collect_vm_info(&mut system, &mut disks);
+                                                        info!(endpoint = %endpoint.name, vm_info = ?vm_info, "Sending VM info response");
+                                                        let response = api::Message {
+                                                            r#type: "vm_info".to_string(),
+                                                            data: vm_info,
+                                                        };
+                                                        if let Ok(msgpack) = rmp_serde::to_vec_named(&response) {
+                                                            if let Err(e) = write.send(Message::Binary(Bytes::from(msgpack))).await {
+                                                                warn!(endpoint = %endpoint.name, error = %e, "Failed to send VM info response");
+                                                            }
+                                                            info!(endpoint = %endpoint.name, "Sent VM info response");
                                                         }
-                                                        info!(endpoint = %endpoint.name, "Sent VM info response");
                                                     }
+                                                    "update_config" => {
+                                                        if let Ok(probe_config) = serde_json::from_value::<api::ProbeConfig>(api_msg.data) {
+                                                            info!(endpoint = %endpoint.name, config = ?probe_config, "Received server configuration");
+
+                                                            if metrics_interval != probe_config.metrics_interval {
+                                                                metrics_interval = probe_config.metrics_interval;
+                                                                // Update the interval for the next tick
+                                                                interval = tokio::time::interval(Duration::from_secs(metrics_interval));
+                                                            }
+                                                        }
+                                                    }
+                                                    _ => info!(endpoint = %endpoint.name, message = ?api_msg, "Received unknown message type"),
                                                 }
-                                                info!(endpoint = %endpoint.name, message = ?api_msg, "Parsed MessagePack message");
                                             }
                                             Err(e) => warn!(endpoint = %endpoint.name, error = %e, "Failed to parse as api::Message"),
                                         }
@@ -155,7 +168,8 @@ impl App {
 
                     warn!(endpoint = %endpoint.name, "WebSocket connection lost, reconnecting...");
                     retry_count += 1;
-                    let delay = config.read().await.connection.base_delay * 2u64.pow(retry_count.min(16) as u32 - 1);
+                    let delay = config.read().await.connection.base_delay
+                        * 2u64.pow(retry_count.min(16) as u32 - 1);
                     let delay = delay.min(config.read().await.connection.max_delay);
                     sleep(Duration::from_secs(delay)).await;
                 }
@@ -180,4 +194,4 @@ impl App {
             }
         }
     }
-} 
+}

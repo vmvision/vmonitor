@@ -104,8 +104,6 @@ pub fn handle_command(command: Commands, config_path: &str) -> std::process::Exi
                 server,
                 secret,
                 enabled,
-                metrics_interval: None,
-                ip_report_interval: None,
                 connection: None,
             });
 

@@ -8,7 +8,9 @@ use tokio_tungstenite::{
     tungstenite::http::{uri, Uri},
     MaybeTlsStream, WebSocketStream,
 };
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, warn};
+
+use crate::config::ConnectionConfig;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Message<T> {
@@ -19,18 +21,32 @@ pub struct Message<T> {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ProbeConfig {
     pub metrics_interval: u64,
-    // pub ip_report_interval: u64,
 }
 
-pub struct ConnectionConfig {
-    pub base_delay: u64,
-    pub max_delay: u64,
-    pub max_retries: i32,
+fn build_uri(server: &str, secret: &str) -> Uri {
+    let mut uri_parts = Uri::from_str(server).expect("Invalid URL").into_parts();
+    let path_and_query = uri_parts
+        .path_and_query
+        .as_ref()
+        .map(|pq| {
+            if pq.path() == "/" {
+                "/wss/probe".to_string()
+            } else {
+                pq.to_string()
+            }
+        })
+        .unwrap_or_else(|| "/wss/probe".to_string());
+
+    uri_parts.path_and_query = Some(
+        uri::PathAndQuery::from_str(&format!("{}?secret={}", path_and_query, secret)).unwrap(),
+    );
+
+    Uri::from_parts(uri_parts).expect("Invalid URL")
 }
 
 // Attempts to establish a WebSocket connection to the specified server with authentication.
 // Returns Some(WebSocketStream) if successful, None if authentication fails or max retries exceeded.
-// 
+//
 // # Arguments
 // * `server` - The WebSocket server URL (ws:// or wss://)
 // * `secret` - Authentication secret/token
@@ -44,40 +60,27 @@ pub async fn connect_websocket(
     secret: &str,
     config: &ConnectionConfig,
 ) -> Option<WebSocketStream<MaybeTlsStream<TcpStream>>> {
-    let mut retry_count = 0;
-    loop {
-        let mut uri_parts = Uri::from_str(server).expect("Invalid URL").into_parts();
-        let path_and_query = uri_parts.path_and_query.as_ref()
-            .map(|pq| {
-                if pq.path() == "/" {
-                    "/wss/probe".to_string()
-                } else {
-                    pq.to_string()
-                }
-            })
-            .unwrap_or_else(|| "/wss/probe".to_string());
-            
-        uri_parts.path_and_query = Some(
-            uri::PathAndQuery::from_str(&format!(
-                "{}?secret={}",
-                path_and_query,
-                secret
-            ))
-            .unwrap(),
-        );
+    let base_delay = config.base_delay;
+    let max_delay = config.max_delay;
+    let max_retries = config.max_retries;
 
-        let uri = Uri::from_parts(uri_parts).expect("Invalid URL");
-        debug!("Connecting to {}", uri);
-        match connect_async(uri).await {
+    let mut retry_count = 0;
+
+    let uri = build_uri(server, secret);
+
+    debug!(url = %uri, "Connecting to WebSocket...");
+
+    loop {
+        match connect_async(uri.clone()).await {
             Ok((socket, _)) => {
-                info!("WebSocket connection established");
+                debug!(url = %uri, "WebSocket connection established");
                 return Some(socket);
             }
             Err(e) => {
                 error!(error = %e, url = %server, "WebSocket connection failed");
                 if let tokio_tungstenite::tungstenite::Error::Http(response) = &e {
                     if response.status() == 401 {
-                        error!("Authentication failed - invalid or missing auth token");
+                        error!(url = %server,"Authentication failed - invalid or missing auth token");
                         return None;
                     }
                 }
@@ -85,7 +88,7 @@ pub async fn connect_websocket(
         }
 
         // Check max retries
-        if config.max_retries >= 0 && retry_count >= config.max_retries {
+        if max_retries >= 0 && retry_count >= max_retries {
             error!(
                 "Failed to connect to WebSocket after {} attempts",
                 retry_count
@@ -95,8 +98,8 @@ pub async fn connect_websocket(
 
         retry_count += 1;
         // Calculate delay with exponential backoff, capped at max_delay
-        let delay = config.base_delay * 2u64.pow(retry_count.min(16) as u32 - 1);
-        let delay = delay.min(config.max_delay);
+        let delay = base_delay * 2u64.pow(retry_count.min(16) as u32 - 1);
+        let delay = delay.min(max_delay);
 
         warn!(
             retry = retry_count,
@@ -107,4 +110,3 @@ pub async fn connect_websocket(
         tokio::time::sleep(Duration::from_secs(delay)).await;
     }
 }
-

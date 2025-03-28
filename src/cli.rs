@@ -99,7 +99,7 @@ pub fn handle_command(command: Commands, config_path: &str) -> std::process::Exi
             }
 
             // Add new endpoint
-            config.endpoints.push(config::EndpointConfig {
+            config.endpoints.push(config::Endpoint {
                 name,
                 server,
                 secret,

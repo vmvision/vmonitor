@@ -3,6 +3,7 @@ mod app;
 mod cli;
 mod config;
 mod monitor;
+mod metrics;
 
 use clap::Parser;
 use std::env;
@@ -60,7 +61,14 @@ async fn main() {
 
     // Load configuration from config file
     let config = match config::AppConfig::from_file(&config_path) {
-        Ok(cfg) => cfg,
+        Ok(mut cfg) => {
+            for endpoint in cfg.endpoints.iter_mut() {
+                if endpoint.connection.is_none() {
+                    endpoint.connection = Some(cfg.connection);
+                }
+            }
+            cfg
+        },
         Err(e) => {
             error!(error = %e, "Failed to load config");
             std::process::exit(1);

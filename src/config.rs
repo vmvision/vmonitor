@@ -2,13 +2,13 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct AppConfig {
-    pub endpoints: Vec<EndpointConfig>,
+    pub endpoints: Vec<Endpoint>,
     #[serde(default = "default_connection")]
     pub connection: ConnectionConfig,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-pub struct EndpointConfig {
+pub struct Endpoint {
     pub name: String,
     pub server: String,
     pub secret: String,
@@ -18,7 +18,7 @@ pub struct EndpointConfig {
     pub connection: Option<ConnectionConfig>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Copy)]
 pub struct ConnectionConfig {
     #[serde(default = "default_base_delay")]
     pub base_delay: u64,

@@ -1,6 +1,6 @@
 [package]
 name = "vmonitor"
-version = "0.0.6"
+version = "0.1.0"
 edition = "2021"
 license = "GPL-3.0-or-later"
 authors = ["AprilNEA <github@sku.moe>"]
@@ -8,7 +8,7 @@ description = "A simple and lightweight system monitor"
 repository = "https://github.com/vmvision/vmonitor"
 readme = "README.md"
 keywords = ["monitor", "system", "websocket", "metrics"]
-categories = ["monitoring", "network-programming"]
+categories = ["rust-patterns", "network-programming"]
 
 [dependencies]
 # Core

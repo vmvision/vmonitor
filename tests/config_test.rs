@@ -5,37 +5,31 @@ use std::time::Duration;
 use tempfile::tempdir;
 use tokio::time::sleep;
 use vmonitor::app::App;
-use vmonitor::config::{AppConfig, EndpointConfig, ConnectionConfig};
+use vmonitor::config::{AppConfig, Endpoint, ConnectionConfig};
 use common::TestConfig;
 
 fn create_default_config() -> AppConfig {
     AppConfig {
-        metrics_interval: 60,
-        ip_report_interval: 300,
+        endpoints: vec![],
         connection: ConnectionConfig {
             base_delay: 1,
             max_delay: 60,
             max_retries: -1,
         },
-        endpoints: vec![],
     }
 }
 
 #[test]
 fn test_endpoint_with_defaults() {
     let default_config = create_default_config();
-    let endpoint = EndpointConfig {
+    let endpoint = Endpoint {
         name: "test".to_string(),
         server: "ws://test.com".to_string(),
         secret: "test-secret".to_string(),
         enabled: true,
-        metrics_interval: None,
-        ip_report_interval: None,
         connection: None,
     };
 
-    assert_eq!(endpoint.metrics_interval.unwrap_or(default_config.metrics_interval), 60);
-    assert_eq!(endpoint.ip_report_interval.unwrap_or(default_config.ip_report_interval), 300);
     assert_eq!(
         endpoint.connection.clone().unwrap_or_else(|| default_config.connection.clone()),
         default_config.connection
@@ -51,48 +45,33 @@ fn test_endpoint_with_overrides() {
         max_retries: 3,
     };
 
-    let endpoint = EndpointConfig {
+    let endpoint = Endpoint {
         name: "test".to_string(),
         server: "ws://test.com".to_string(),
         secret: "test-secret".to_string(),
         enabled: true,
-        metrics_interval: Some(30),
-        ip_report_interval: Some(150),
         connection: Some(custom_connection.clone()),
     };
 
-    assert_eq!(endpoint.metrics_interval.unwrap_or(default_config.metrics_interval), 30);
-    assert_eq!(endpoint.ip_report_interval.unwrap_or(default_config.ip_report_interval), 150);
     assert_eq!(endpoint.connection.clone().unwrap_or_else(|| default_config.connection.clone()), custom_connection);
 }
 
 #[test]
 fn test_config_serialization() {
     let config = AppConfig {
-        metrics_interval: 60,
-        ip_report_interval: 300,
-        connection: ConnectionConfig {
-            base_delay: 1,
-            max_delay: 60,
-            max_retries: -1,
-        },
         endpoints: vec![
-            EndpointConfig {
+            Endpoint {
                 name: "test1".to_string(),
                 server: "ws://test1.com".to_string(),
                 secret: "secret1".to_string(),
                 enabled: true,
-                metrics_interval: Some(30),
-                ip_report_interval: None,
                 connection: None,
             },
-            EndpointConfig {
+            Endpoint {
                 name: "test2".to_string(),
                 server: "ws://test2.com".to_string(),
                 secret: "secret2".to_string(),
                 enabled: true,
-                metrics_interval: None,
-                ip_report_interval: Some(150),
                 connection: Some(ConnectionConfig {
                     base_delay: 2,
                     max_delay: 30,
@@ -100,6 +79,11 @@ fn test_config_serialization() {
                 }),
             },
         ],
+        connection: ConnectionConfig {
+            base_delay: 1,
+            max_delay: 60,
+            max_retries: -1,
+        },
     };
 
     let serialized = toml::to_string_pretty(&config).unwrap();
@@ -110,9 +94,6 @@ fn test_config_serialization() {
 #[test]
 fn test_config_parsing() {
     let config_str = r#"
-        metrics_interval = 60
-        ip_report_interval = 300
-
         [connection]
         base_delay = 2
         max_delay = 120
@@ -138,8 +119,6 @@ fn test_config_parsing() {
     let config = AppConfig::from_file(test_config.config_path.to_str().unwrap()).unwrap();
 
     // Verify config values
-    assert_eq!(config.metrics_interval, 60);
-    assert_eq!(config.ip_report_interval, 300);
     assert_eq!(config.connection.base_delay, 2);
     assert_eq!(config.connection.max_delay, 120);
     assert_eq!(config.connection.max_retries, 3);
@@ -166,24 +145,20 @@ async fn test_dynamic_endpoint_management() {
 
     // Create initial config with one endpoint
     let initial_config = AppConfig {
-        metrics_interval: 1,
-        ip_report_interval: 1,
+        endpoints: vec![
+            Endpoint {
+                name: "test1".to_string(),
+                server: "wss://test1.example.com/ws".to_string(),
+                secret: "secret1".to_string(),
+                enabled: true,
+                connection: None,
+            }
+        ],
         connection: ConnectionConfig {
             base_delay: 1,
             max_delay: 5,
             max_retries: 1,
         },
-        endpoints: vec![
-            EndpointConfig {
-                name: "test1".to_string(),
-                server: "wss://test1.example.com/ws".to_string(),
-                secret: "secret1".to_string(),
-                enabled: true,
-                metrics_interval: None,
-                ip_report_interval: None,
-                connection: None,
-            }
-        ],
     };
 
     // Save initial config
@@ -202,13 +177,11 @@ async fn test_dynamic_endpoint_management() {
 
     // Test 1: Add new endpoint
     let mut config = AppConfig::from_file(config_path.to_str().unwrap()).unwrap();
-    config.endpoints.push(EndpointConfig {
+    config.endpoints.push(Endpoint {
         name: "test2".to_string(),
         server: "wss://test2.example.com/ws".to_string(),
         secret: "secret2".to_string(),
         enabled: true,
-        metrics_interval: None,
-        ip_report_interval: None,
         connection: None,
     });
     config.save_to_file(config_path.to_str().unwrap()).unwrap();
@@ -257,24 +230,20 @@ async fn test_config_file_monitoring() {
 
     // Create initial config
     let initial_config = AppConfig {
-        metrics_interval: 1,
-        ip_report_interval: 1,
+        endpoints: vec![
+            Endpoint {
+                name: "test".to_string(),
+                server: "wss://test.example.com/ws".to_string(),
+                secret: "secret".to_string(),
+                enabled: true,
+                connection: None,
+            }
+        ],
         connection: ConnectionConfig {
             base_delay: 1,
             max_delay: 5,
             max_retries: 1,
         },
-        endpoints: vec![
-            EndpointConfig {
-                name: "test".to_string(),
-                server: "wss://test.example.com/ws".to_string(),
-                secret: "secret".to_string(),
-                enabled: true,
-                metrics_interval: None,
-                ip_report_interval: None,
-                connection: None,
-            }
-        ],
     };
 
     // Save initial config
@@ -299,24 +268,20 @@ async fn test_config_file_monitoring() {
 
     // Restore valid config
     let valid_config = AppConfig {
-        metrics_interval: 1,
-        ip_report_interval: 1,
+        endpoints: vec![
+            Endpoint {
+                name: "test".to_string(),
+                server: "wss://test.example.com/ws".to_string(),
+                secret: "secret".to_string(),
+                enabled: true,
+                connection: None,
+            }
+        ],
         connection: ConnectionConfig {
             base_delay: 1,
             max_delay: 5,
             max_retries: 1,
         },
-        endpoints: vec![
-            EndpointConfig {
-                name: "test".to_string(),
-                server: "wss://test.example.com/ws".to_string(),
-                secret: "secret".to_string(),
-                enabled: true,
-                metrics_interval: None,
-                ip_report_interval: None,
-                connection: None,
-            }
-        ],
     };
     valid_config.save_to_file(config_path.to_str().unwrap()).unwrap();
 
@@ -336,24 +301,20 @@ async fn test_concurrent_config_changes() {
 
     // Create initial config
     let initial_config = AppConfig {
-        metrics_interval: 1,
-        ip_report_interval: 1,
+        endpoints: vec![
+            Endpoint {
+                name: "test".to_string(),
+                server: "wss://test.example.com/ws".to_string(),
+                secret: "secret".to_string(),
+                enabled: true,
+                connection: None,
+            }
+        ],
         connection: ConnectionConfig {
             base_delay: 1,
             max_delay: 5,
             max_retries: 1,
         },
-        endpoints: vec![
-            EndpointConfig {
-                name: "test".to_string(),
-                server: "wss://test.example.com/ws".to_string(),
-                secret: "secret".to_string(),
-                enabled: true,
-                metrics_interval: None,
-                ip_report_interval: None,
-                connection: None,
-            }
-        ],
     };
 
     // Save initial config

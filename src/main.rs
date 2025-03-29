@@ -3,7 +3,7 @@ mod app;
 mod cli;
 mod config;
 mod monitor;
-mod metrics;
+mod features;
 
 use clap::Parser;
 use std::env;

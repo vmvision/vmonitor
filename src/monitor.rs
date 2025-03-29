@@ -1,6 +1,6 @@
 use crate::api;
 use crate::config::Endpoint;
-use crate::metrics::Metrics;
+use crate::features::metrics::Metrics;
 use futures::{sink::SinkExt, stream::StreamExt};
 use futures_util::stream::SplitStream;
 use tokio::{
